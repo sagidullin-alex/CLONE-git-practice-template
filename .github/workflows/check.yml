@@ -1,0 +1,107 @@
+name: Validate 
+on:
+  push:
+    branches: ["**"]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch all branches
+        run: |
+          set -euo pipefail
+          git fetch --prune --tags origin "+refs/heads/*:refs/remotes/origin/*"
+
+      - name: Validate assignment
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          export LANG=C.UTF-8
+
+          # Determine main/master
+          MAIN_REF="refs/remotes/origin/main"
+          if ! git show-ref --verify --quiet "$MAIN_REF"; then
+            MAIN_REF="refs/remotes/origin/master"
+          fi
+          if ! git show-ref --verify --quiet "$MAIN_REF"; then
+            echo "ERROR: Neither origin/main nor origin/master exists."
+            exit 1
+          fi
+          echo "Using main ref: $MAIN_REF"
+
+          FEATURE_REF="refs/remotes/origin/feature"
+
+          # feature branch must exist on origin
+          if ! git show-ref --verify --quiet "$FEATURE_REF"; then
+            echo "ERROR: Missing branch on origin: feature"
+            exit 1
+          fi
+
+          # Commit messages: check in specific branches
+          if ! git log "$MAIN_REF" --format=%s | grep -Fxq "Первый коммит"; then
+            echo "ERROR: Missing commit 'Первый коммит' in main branch"
+            exit 1
+          fi
+          if ! git log "$MAIN_REF" --format=%s | grep -Fxq "Изменение в main"; then
+            echo "ERROR: Missing commit 'Изменение в main' in main branch"
+            exit 1
+          fi
+          if ! git log "$FEATURE_REF" --format=%s | grep -Fxq "Изменение в feature"; then
+            echo "ERROR: Missing commit 'Изменение в feature' in feature branch"
+            exit 1
+          fi
+
+          # Ensure feature tip is in main history (merged)
+          FEATURE_TIP="$(git rev-parse "$FEATURE_REF")"
+          MAIN_TIP="$(git rev-parse "$MAIN_REF")"
+          if ! git merge-base --is-ancestor "$FEATURE_TIP" "$MAIN_TIP"; then
+            echo "ERROR: feature branch tip is not in main history."
+            echo "Hint: merge feature into main and push."
+            exit 1
+          fi
+
+          # Require a merge commit exists on main (forces non-fast-forward merge outcome)
+          if ! git rev-list --merges "$MAIN_REF" | head -n 1 | grep -q .; then
+            echo "ERROR: No merge commit found on main/master."
+            echo "Hint: make a commit on main after creating feature, then merge feature into main."
+            exit 1
+          fi
+
+          # test.txt must exist on main and contain required lines (substring match)
+          if ! git cat-file -e "$MAIN_REF:test.txt" 2>/dev/null; then
+            echo "ERROR: test.txt must exist on main/master."
+            exit 1
+          fi
+
+          content="$(git show "$MAIN_REF:test.txt")"
+          for needle in "Первая версия файла" "Изменение во второй ветке" "Изменение в main"; do
+            if ! printf "%s" "$content" | grep -Fq "$needle"; then
+              echo "ERROR: test.txt on main/master must contain: $needle"
+              exit 1
+            fi
+          done
+
+          # README.md must exist and contain exact token for repository owner
+          if ! git cat-file -e "$MAIN_REF:README.md" 2>/dev/null; then
+            echo "ERROR: README.md must exist on main/master."
+            exit 1
+          fi
+
+          expected="STUDENT_TOKEN: TOKEN-${OWNER}"
+          if ! git show "$MAIN_REF:README.md" | grep -Fxq "$expected"; then
+            echo "ERROR: README.md must contain exactly: $expected"
+            exit 1
+          fi
+
+          echo "OK: All checks passed."
+
+      - name: Write Teachbase code to Summary
+        run: |
+          echo "## Teachbase" >> "$GITHUB_STEP_SUMMARY"
+          echo "TB-${GITHUB_RUN_ID}" >> "$GITHUB_STEP_SUMMARY"
