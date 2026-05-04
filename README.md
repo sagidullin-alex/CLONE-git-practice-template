@@ -41,6 +41,7 @@ git push
 В `README.md` добавьте/замените строку:
 
  `STUDENT_TOKEN: TOKEN-<ваш_github_username>`
+STUDENT_TOKEN: TOKEN-sagidullin-alex
 
 и закоммитьте:
 
